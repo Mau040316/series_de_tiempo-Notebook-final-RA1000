@@ -1,0 +1,757 @@
+\documentclass[12pt,letterpaper]{article}
+
+% ── Paquetes ──────────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{parskip}
+
+\geometry{margin=2.5cm}
+
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codeframe}{RGB}{200,200,200}
+\definecolor{kwcolor}{RGB}{0,0,180}
+\definecolor{strcolor}{RGB}{163,21,21}
+\definecolor{cmtcolor}{RGB}{0,128,0}
+\definecolor{numcolor}{RGB}{9,134,88}
+
+\lstdefinestyle{python}{
+  language=Python,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{kwcolor}\bfseries,
+  stringstyle=\color{strcolor},
+  commentstyle=\color{cmtcolor}\itshape,
+  numberstyle=\tiny\color{numcolor},
+  numbers=left,
+  numbersep=8pt,
+  breaklines=true,
+  breakatwhitespace=true,
+  showstringspaces=false,
+  tabsize=4,
+  captionpos=b,
+  xleftmargin=1.5em,
+  framexleftmargin=1.5em,
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small Series de Tiempo para Finanzas}
+\lhead{\small Universidad Panamericana}
+\cfoot{\thepage}
+
+\newtheorem{definition}{Definici\'on}[section]
+\newtheorem{proposition}{Proposici\'on}[section]
+\newtheorem{remark}{Observaci\'on}[section]
+
+\title{
+  \LARGE\bfseries Series de Tiempo para Finanzas\\[0.5em]
+  \large Compendio: ARIMA, SARIMA, SARIMAX, Familia GARCH y Laboratorio de C\'odigo
+}
+\author{
+  Mauricio Olivares\\[0.3em]
+  \small Profesor: Dr.\ C\'esar Galindo\\
+  \small Universidad Panamericana
+}
+\date{Verano 2026}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+\tableofcontents
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+\part{Notebook de An\'alisis: C\'odigo Documentado}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\section{Carga y Exploraci\'on de Datos (California Housing)}
+
+\subsection{Marco te\'orico}
+
+Aunque el dataset \texttt{california\_housing\_train.csv} no es una serie de tiempo,
+su carga ilustra el flujo de trabajo est\'andar con \texttt{pandas}:
+leer datos $\to$ inspeccionar estructura $\to$ explorar estad\'isticas descriptivas.
+
+\subsection{C\'odigo}
+
+\begin{lstlisting}[style=python, caption={Carga del dataset California Housing}]
+import pandas as pd
+
+ventas = pd.read_csv("california_housing_train.csv")
+ventas.head(21)
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Simulaci\'on de un Proceso AR(1) Estacionario}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Marco te\'orico}
+
+Un proceso \textbf{AR(1)} se define como:
+
+\begin{equation}
+  X_t = c + \phi\,X_{t-1} + \varepsilon_t, \qquad \varepsilon_t \sim \mathcal{N}(0,\sigma^2)
+\end{equation}
+
+Para que sea \textbf{estacionario} se requiere $|\phi| < 1$. En ese caso:
+
+\begin{align}
+  E[X_t]           &= \frac{c}{1-\phi} \\
+  \mathrm{Var}(X_t) &= \frac{\sigma^2}{1-\phi^2} \\
+  \rho(k)           &= \phi^k \quad k \geq 0
+\end{align}
+
+\subsection{C\'odigo}
+
+\begin{lstlisting}[style=python, caption={Simulaci\'on AR(1) estacionario}]
+import numpy as np
+import matplotlib.pyplot as plt
+
+n_points      = 500
+phi           = 0.7
+c             = 0
+sigma_epsilon = 1.0
+
+np.random.seed(42)
+epsilon     = np.random.normal(0, sigma_epsilon, n_points)
+time_series = np.zeros(n_points)
+time_series[0] = epsilon[0]
+for t in range(1, n_points):
+    time_series[t] = c + phi * time_series[t-1] + epsilon[t]
+
+plt.figure(figsize=(14, 5))
+plt.plot(time_series, color='steelblue', lw=0.8)
+plt.title(f'Proceso AR(1) simulado (phi={phi})', fontsize=13)
+plt.xlabel('Tiempo'); plt.ylabel('X_t')
+plt.grid(True, ls='--', alpha=0.5)
+plt.tight_layout(); plt.show()
+
+print(f"Media muestral   : {np.mean(time_series):.4f}")
+print(f"Varianza muestral: {np.var(time_series):.4f}")
+print(f"Var. teorica     : {sigma_epsilon**2/(1-phi**2):.4f}")
+\end{lstlisting}
+
+\subsection{Conclusiones}
+
+La media muestral converge a $c/(1-\phi)=0$ y la varianza a
+$\sigma^2/(1-\phi^2) \approx 1.96$. La serie oscila alrededor de cero sin
+tendencia, confirmando la estacionariedad.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Descarga y Visualizaci\'on de Datos Financieros (AMZN)}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Marco te\'orico}
+
+Los precios en nivel son \textbf{no estacionarios} (ra\'iz unitaria), pero los
+log-retornos $r_t = \ln(P_t/P_{t-1})$ s\'i lo son aproximadamente.
+
+\subsection{C\'odigo}
+
+\begin{lstlisting}[style=python, caption={Descarga de precios AMZN con yfinance}]
+import yfinance as yf
+import plotly.express as px
+
+amzn         = yf.download("AMZN", end="2026-01-01", progress=False)
+precios_amzn = amzn["Close"]
+
+fig = px.line(
+    precios_amzn,
+    x=precios_amzn.index,
+    y='AMZN',
+    title='Precios de Cierre de AMZN',
+    labels={'index': 'Fecha', 'AMZN': 'Precio de Cierre (USD)'},
+    template='plotly_white'
+)
+fig.show()
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Simulaci\'on y An\'alisis de Caminata Aleatoria}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Marco te\'orico}
+
+Una \textbf{caminata aleatoria}: $X_t = X_{t-1} + Z_t$, con
+$\mathrm{Var}(X_t) = t\sigma^2 \to \infty$. La primera diferencia
+$\Delta X_t = Z_t$ s\'i es estacionaria.
+
+Prueba \textbf{ADF}: $H_0$ = ra\'iz unitaria. Si ADF $> -2.89$
+no se rechaza $H_0$; se diferencia la serie.
+
+\subsection{C\'odigo}
+
+\begin{lstlisting}[style=python, caption={Caminata aleatoria y pruebas ADF/KPSS}]
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.tsa.stattools import adfuller, kpss
+
+np.random.seed(42)
+n = 300
+Z = np.random.normal(0, 1, n)
+X = np.cumsum(Z)
+
+adf_result = adfuller(X, autolag='AIC')
+print(f"ADF (nivel): {adf_result[0]:.4f}  p={adf_result[1]:.4f}")
+
+dX       = np.diff(X)
+adf_diff = adfuller(dX, autolag='AIC')
+print(f"ADF (diff) : {adf_diff[0]:.4f}  p={adf_diff[1]:.4f}")
+
+fig, axes = plt.subplots(2, 1, figsize=(13, 8))
+axes[0].plot(X,  color='#e74c3c', lw=1.2); axes[0].set_title('Nivel $X_t$')
+axes[1].plot(dX, color='steelblue', lw=1);  axes[1].set_title('Diferencia $\Delta X_t$')
+for ax in axes:
+    ax.grid(True, ls='--', alpha=0.5)
+plt.tight_layout(); plt.show()
+\end{lstlisting}
+
+\subsection{Conclusiones}
+
+En nivel: ADF no rechaza ra\'iz unitaria. En primera diferencia: ADF rechaza
+$H_0$ $\Rightarrow$ modelos ARIMA con $d=1$ son apropiados.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Simulaci\'on ARIMA y An\'alisis de Residuos}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Marco te\'orico}
+
+Un proceso \textbf{ARIMA$(p,d,q)$}:
+\begin{equation}
+  \Phi_p(B)(1-B)^d Y_t = \Theta_q(B)\,\varepsilon_t
+\end{equation}
+
+Los residuos de un modelo bien especificado deben ser \textbf{ruido blanco}:
+media cero, varianza constante y sin autocorrelaci\'on (verificado con ACF/PACF,
+histograma y Q-Q plot).
+
+\subsection{C\'odigo: ajuste y diagn\'ostico}
+
+\begin{lstlisting}[style=python, caption={AR(1): ajuste y diagn\'ostico de residuos}]
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.tsa.ar_model import AutoReg
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+import statsmodels.api as sm
+
+np.random.seed(42)
+n_points = 500; phi = 0.7
+epsilon  = np.random.normal(0, 1, n_points)
+time_series = np.zeros(n_points)
+for t in range(1, n_points):
+    time_series[t] = phi * time_series[t-1] + epsilon[t]
+
+model     = AutoReg(time_series, lags=1).fit()
+residuals = model.resid
+print(f"phi estimado: {model.params[1]:.4f}")
+print(f"Media resid : {np.mean(residuals):.4f}")
+print(f"Std resid   : {np.std(residuals):.4f}")
+
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+axes[0].plot(residuals, color='steelblue', lw=0.7)
+axes[0].axhline(0, color='red', ls='--')
+axes[0].set_title('Residuales vs. Tiempo')
+axes[1].hist(residuals, bins=30, color='steelblue', edgecolor='white')
+axes[1].set_title('Histograma de Residuales')
+sm.qqplot(residuals, line='s', ax=axes[2])
+axes[2].set_title('Q-Q Plot')
+plt.tight_layout(); plt.show()
+
+fig2, axes2 = plt.subplots(1, 2, figsize=(14, 5))
+plot_acf( residuals, ax=axes2[0], lags=40); axes2[0].set_title('ACF Residuales')
+plot_pacf(residuals, ax=axes2[1], lags=40); axes2[1].set_title('PACF Residuales')
+plt.tight_layout(); plt.show()
+\end{lstlisting}
+
+\subsection{C\'odigo: predicci\'on}
+
+\begin{lstlisting}[style=python, caption={Pron\'ostico con modelo AR(1)}]
+forecast_steps = 50
+forecast = model.predict(
+    start=len(time_series),
+    end=len(time_series) + forecast_steps - 1
+)
+
+plt.figure(figsize=(14, 5))
+plt.plot(range(len(time_series)), time_series,
+         label='Serie original', color='steelblue', lw=0.8)
+plt.plot(range(len(time_series), len(time_series)+forecast_steps),
+         forecast, label='Pronostico', color='red', ls='--', lw=1.5)
+plt.title('Pronostico AR(1)')
+plt.xlabel('Tiempo'); plt.ylabel('$X_t$')
+plt.legend(); plt.grid(True, ls='--', alpha=0.5)
+plt.tight_layout(); plt.show()
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{An\'alisis con Prophet (Meta)}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Marco te\'orico}
+
+Prophet descompone la serie en componentes aditivos:
+\begin{equation}
+  y(t) = g(t) + s(t) + h(t) + \varepsilon_t
+\end{equation}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+Caracter\'istica & ARIMA & Prophet \\
+\midrule
+Identificaci\'on  & ACF/PACF ($p,d,q$) & Autom\'atica \\
+Estacionalidad    & SARIMA con $s$ fijo & M\'ultiple y flexible \\
+Tendencia         & Diferenciaci\'on    & Lineal o log\'istica \\
+Valores at\'ipicos & Sensible           & Robusto \\
+\bottomrule
+\end{tabular}
+\caption{Comparaci\'on ARIMA vs.\ Prophet.}
+\end{table}
+
+\subsection{C\'odigo}
+
+\begin{lstlisting}[style=python, caption={Ajuste y pron\'ostico con Prophet}]
+# !pip install prophet
+import pandas as pd
+from prophet import Prophet
+import matplotlib.pyplot as plt
+
+data_url = ('https://raw.githubusercontent.com/facebook/prophet/'
+            'main/examples/example_wp_log_peyton_manning.csv')
+df_prophet = pd.read_csv(data_url)
+
+model_prophet = Prophet()
+model_prophet.fit(df_prophet)
+
+future   = model_prophet.make_future_dataframe(periods=365)
+forecast = model_prophet.predict(future)
+
+fig1 = model_prophet.plot(forecast)
+plt.title('Pronostico con Prophet'); plt.show()
+
+fig2 = model_prophet.plot_components(forecast)
+plt.show()
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Selecci\'on de Orden AR$(p)$: Criterios AIC y BIC}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Marco te\'orico}
+
+\begin{align}
+  \mathrm{AIC} &= -2\ln\hat{L} + 2k \\
+  \mathrm{BIC} &= -2\ln\hat{L} + k\ln(n)
+\end{align}
+
+Se elige el modelo con el \textbf{menor} criterio. BIC penaliza m\'as la
+complejidad ($\ln n > 2$ para $n > 7$).
+
+\subsection{C\'odigo}
+
+\begin{lstlisting}[style=python, caption={Selecci\'on de orden AR por AIC/BIC}]
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from statsmodels.tsa.ar_model import AutoReg
+
+np.random.seed(42)
+n_points = 500; phi = 0.7
+epsilon  = np.random.normal(0, 1, n_points)
+time_series = np.zeros(n_points)
+for t in range(1, n_points):
+    time_series[t] = phi * time_series[t-1] + epsilon[t]
+
+results = []
+for p in range(1, 21):
+    try:
+        res = AutoReg(time_series, lags=p).fit()
+        results.append({'Order': p, 'AIC': res.aic, 'BIC': res.bic})
+    except Exception:
+        pass
+
+ic_df = pd.DataFrame(results)
+print(f"Orden optimo AIC: {ic_df.loc[ic_df['AIC'].idxmin(),'Order']}")
+print(f"Orden optimo BIC: {ic_df.loc[ic_df['BIC'].idxmin(),'Order']}")
+
+fig = go.Figure([
+    go.Scatter(x=ic_df['Order'], y=ic_df['AIC'],
+               mode='lines+markers', name='AIC',
+               line=dict(color='blue')),
+    go.Scatter(x=ic_df['Order'], y=ic_df['BIC'],
+               mode='lines+markers', name='BIC',
+               line=dict(color='red'))
+])
+fig.update_layout(title='AIC y BIC para Modelos AR(p)',
+                  xaxis_title='Orden p',
+                  yaxis_title='Criterio de Informacion',
+                  template='plotly_white')
+fig.show()
+\end{lstlisting}
+
+\subsection{Conclusiones}
+
+Para la serie AR(1) con $\phi=0.7$, tanto AIC como BIC seleccionan $p=1$,
+confirmando que los criterios recuperan el proceso verdadero. Para $p>1$
+los criterios crecen: los rezagos adicionales son sobreajuste.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Generaci\'on y An\'alisis de Serie ARIMA$(p,d,q)$}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Marco te\'orico}
+
+\textbf{ARIMA$(p,d,q)$} integra tres componentes:
+$p$ (rezagos AR, identificado con PACF),
+$d$ (diferencias para estacionariedad, prueba ADF),
+$q$ (t\'erminos MA, identificado con ACF).
+
+\subsection{C\'odigo}
+
+\begin{lstlisting}[style=python, caption={Simulaci\'on y ajuste ARIMA(1,0,0)}]
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+import matplotlib.pyplot as plt
+
+np.random.seed(42)
+n = 500; phi_true = 0.7
+eps = np.random.normal(0, 1, n)
+y   = np.zeros(n)
+for t in range(1, n):
+    y[t] = phi_true * y[t-1] + eps[t]
+
+model_arima = ARIMA(y, order=(1, 0, 0)).fit()
+print(model_arima.summary())
+
+plt.figure(figsize=(13, 5))
+plt.plot(y, color='steelblue', lw=0.8, label='Serie simulada')
+plt.title('Serie ARIMA(1,0,0) simulada')
+plt.xlabel('Tiempo'); plt.ylabel('$Y_t$')
+plt.legend(); plt.grid(True, ls='--', alpha=0.5)
+plt.tight_layout(); plt.show()
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Conceptos SARIMA y Dataset AirPassengers}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Marco te\'orico}
+
+\textbf{SARIMA$(p,d,q)(P,D,Q)_s$}:
+\begin{equation}
+  \Phi_P(B^s)\,\Phi_p(B)\,(1-B^s)^D(1-B)^d\,Y_t
+  = \Theta_Q(B^s)\,\Theta_q(B)\,\varepsilon_t
+\end{equation}
+
+Gu\'ia de identificaci\'on:
+$d$ (ADF regular), $D$ (ACF en rezagos $s,2s,\ldots$),
+$p$ (PACF diferenciada), $q$ (ACF diferenciada),
+$P$, $Q$ (PACF/ACF en m\'ultiplos de $s$).
+
+\textbf{Nota:} la ACF de un AR puro no informa sobre el orden; usar la PACF.
+
+\subsection{C\'odigo}
+
+\begin{lstlisting}[style=python, caption={Dataset AirPassengers: carga y exploraci\'on}]
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+import matplotlib.pyplot as plt
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+
+air_data = sm.datasets.get_rdataset('AirPassengers', 'datasets')
+air_df   = air_data.data.copy()
+air_df.index = pd.period_range(start='1949-01',
+                               periods=len(air_df), freq='M')
+
+plt.figure(figsize=(13, 5))
+plt.plot(air_df.index.to_timestamp(), air_df['value'],
+         color='steelblue', lw=1.2)
+plt.title('AirPassengers: Pasajeros Aereos Internacionales (1949-1960)')
+plt.xlabel('Fecha'); plt.ylabel('Miles de pasajeros')
+plt.grid(True, ls='--', alpha=0.5)
+plt.tight_layout(); plt.show()
+
+log_air = np.log(air_df['value'])
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+plot_acf( log_air, ax=axes[0], lags=40)
+axes[0].set_title('ACF log(Pasajeros)')
+plot_pacf(log_air, ax=axes[1], lags=40)
+axes[1].set_title('PACF log(Pasajeros)')
+plt.tight_layout(); plt.show()
+\end{lstlisting}
+
+\subsection{Conclusiones}
+
+La serie muestra tendencia creciente y estacionalidad multiplicativa ($s=12$).
+La log-transformaci\'on convierte la estacionalidad en aditiva. Se requiere
+$d=1$ y $D=1$: modelo de Airline SARIMA$(0,1,1)(0,1,1)_{12}$.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\part{Tarea: ARIMA, SARIMA y Pron\'ostico}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\section{Procesos Estacionarios y Fundamentos}
+
+\subsection*{Ejercicio 1.1 --- Estacionariedad, ACF y PACF}
+
+\begin{definition}[Estacionariedad d\'ebil]
+  $\{Y_t\}$ es d\'ebilmente estacionario si $E[Y_t]=\mu$ para todo $t$ y
+  $\mathrm{Cov}(Y_t,Y_{t-k})=\gamma(k)$ depende s\'olo de $k$.
+\end{definition}
+
+\begin{definition}[Estacionariedad estricta]
+  La distribuci\'on conjunta de $(Y_{t_1},\ldots,Y_{t_m})$ coincide con la de
+  $(Y_{t_1+h},\ldots,Y_{t_m+h})$ para todo $h$.
+\end{definition}
+
+\textbf{Propiedades ACF:} $|\rho(k)|\leq 1$ y $\rho(k)=\rho(-k)$.
+
+\textbf{AR(1):} para $Y_t=0.6\,Y_{t-1}+\varepsilon_t$:
+\[
+  \mathrm{Var}(Y_t)=\frac{\sigma^2}{1-0.36}, \qquad \rho(k)=0.6^k
+\]
+
+\subsection*{Ejercicio 1.2 --- Procesos AR, MA y ARMA}
+
+\textbf{AR(2):} $Y_t=1.2\,Y_{t-1}-0.32\,Y_{t-2}+\varepsilon_t$.
+Ra\'ices de $\Phi(z)=1-1.2z+0.32z^2$: $z_1=1.25$, $z_2=2.5$.
+Fuera del c\'irculo unitario $\Rightarrow$ \textbf{estacionario}.
+
+\textbf{Invertibilidad MA$(q)$:} ra\'ices de $\Theta(z)$ fuera del c\'irculo unitario.
+
+\subsection*{Ejercicio 1.3 --- Ra\'ices Unitarias}
+
+Caminata aleatoria: $\mathrm{Var}(Y_t)=t\sigma^2$ $\Rightarrow$ no estacionaria.
+Primera diferencia: $\Delta Y_t=\varepsilon_t$ $\Rightarrow$ estacionaria.
+
+\section{Modelos ARIMA$(p,d,q)$}
+
+\subsection*{Ejercicio 2.1 --- Procedimiento Box-Jenkins}
+
+(i) Identificaci\'on (ACF/PACF), (ii) Estimaci\'on (MV o MCO),
+(iii) Diagn\'ostico (residuos como ruido blanco).
+
+\subsection*{Ejercicio 2.2 --- ARIMA$(1,1,1)$ para log-precios}
+
+$(1-\phi_1 B)\,r_t=(1+\theta_1 B)\,\varepsilon_t$, con $r_t=\Delta y_t$.
+
+Con $\hat{\phi}_1=0.15$, $\hat{\theta}_1=-0.08$:
+$\hat{r}_{T+1|T}=\hat{\phi}_1 r_T+\hat{\theta}_1\varepsilon_T$.
+
+\subsection*{Ejercicio 2.3 --- Pron\'ostico horizonte m\'ultiple}
+
+ARIMA$(2,1,0)$, $W_t=\Delta Y_t$:
+$W_t=0.5\,W_{t-1}-0.2\,W_{t-2}+\varepsilon_t$.
+
+\section{Modelos SARIMA}
+
+\subsection*{Ejercicio 3.1 --- Estructura estacional}
+
+SARIMA$(1,1,1)(1,1,1)_{12}$:
+\[
+  \Phi_1(B^{12})\,\phi_1(B)\,(1-B)(1-B^{12})\,Y_t
+  =\Theta_1(B^{12})\,\theta_1(B)\,\varepsilon_t
+\]
+
+\subsection*{Ejercicio 3.2 --- Modelo de Airline}
+
+$(1-B)(1-B^{12})\,V_t=(1+\theta_1 B)(1+\Theta_1 B^{12})\,\varepsilon_t$.
+
+Lado izquierdo: $V_t-V_{t-1}-V_{t-12}+V_{t-13}$.
+
+\subsection*{Ejercicio 3.3 --- Tasas de inter\'es (CETES)}
+
+SARIMA$(p,d,q)(P,D,Q)_{13}$ por ciclo trimestral de 13 semanas.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\part{Soluciones: SARIMAX y Familia GARCH}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\section{Parte A --- Ejercicios Anal\'iticos}
+
+\subsection{Identificaci\'on SARIMAX con variable ex\'ogena macro}
+
+SARIMAX$(1,1,1)(1,1,0)_{12}$, $n=156$, $x_t=$ rendimiento T-Note 10Y.
+
+\textbf{(a) Ecuaci\'on completa:}
+\[
+  (1-\Phi_1 B^{12})(1-\phi_1 B)(1-B)(1-B^{12})\,y_t
+  =\beta x_t+(1+\theta_1 B)\,\varepsilon_t
+\]
+
+\textbf{(b)} ADF$=-1.42>-2.89$ $\Rightarrow$ ra\'iz unitaria; $d=1$, $D=1$.
+
+\textbf{(c)} $\hat{\beta}=-0.87$: aumento de 1 p.p.\ en T-Note
+$\Rightarrow$ ca\'ida relativa $\approx 58\%$ en precio del bono.
+
+\textbf{(d)}
+$t=-0.87/0.12=-7.25$, $\mathrm{IC}_{95\%}=[-1.105,\,-0.635]$. Altamente
+significativo ($p<0.01$).
+
+\subsection{Prueba ARCH y motivaci\'on del GARCH}
+
+LM-ARCH$(5)=47.83$ ($p\approx4\times10^{-6}$). Se rechaza $H_0$
+(varianza condicional constante) $\Rightarrow$ GARCH apropiado.
+
+Si $r_t\sim\mathrm{ARCH}(1)$:
+\[
+  r_t^2=\omega+\alpha\,r_{t-1}^2+u_t \quad\text{(AR(1) en }r_t^2\text{)}
+\]
+
+\subsection{Estimaci\'on e interpretaci\'on del GARCH$(1,1)$}
+
+$\hat{\omega}=0.0285$, $\hat{\alpha}=0.083$, $\hat{\beta}=0.901$.
+
+$\hat{\alpha}+\hat{\beta}=0.984<1$ $\checkmark$
+
+\[
+  \bar{\sigma}^2=\frac{0.0285}{0.016}=1.781\;\%^2/\text{d\'ia},
+  \qquad \bar{\sigma}_{\text{anual}}\approx21.19\%
+\]
+
+Con $\varepsilon_t=-2.5\%$, $\hat{\sigma}_t=1.2\%$:
+$\hat{\sigma}_{t+1}^2=1.8447\;\%^2 \Rightarrow \hat{\sigma}_{t+1}=1.358\%$.
+
+Vida media: $h^*=\ln0.5/\ln0.984\approx43$ d\'ias.
+
+\subsection{GJR-GARCH y efecto apalancamiento}
+
+$\hat{\lambda}/\hat{\alpha}=0.078/0.042=1.857$ $\Rightarrow$ $+186\%$.
+
+Estacionariedad: $\hat{\alpha}+\frac{1}{2}\hat{\lambda}+\hat{\beta}=0.993<1$ $\checkmark$
+
+\subsection{EGARCH: logaritmo de la varianza y asimetr\'ia}
+
+$\hat{\gamma}=-0.063<0$ confirma efecto apalancamiento.
+
+$g(-2)-g(+2)=0.252 \Rightarrow \sigma_t^2\times e^{0.252}\approx+28.7\%$ extra
+ante choque negativo.
+
+\subsection{GARCH-in-Mean}
+
+$\hat{\delta}=0.38$: prima de riesgo por unidad de volatilidad.
+
+Con $\hat{\sigma}_t=0.08$:
+$E_t[r_{t+1}]=0.012+0.38(0.08)=4.24\%$ trimestral ($\approx18\%$ anual).
+
+\subsection{Validaci\'on ARIMA-GARCH (MXN/USD)}
+
+Protocolo de 5 pasos:
+\begin{enumerate}
+  \item LB$(\hat{z}_t)\;p=0.36>0.05$: sin autocorrelaci\'on en media.
+  \item LB$(\hat{z}_t^2)\;p=0.51>0.05$: GARCH absorbi\'o heterocedasticidad.
+  \item JB $p=0$: normalidad rechazada $\Rightarrow$ distribuci\'on $t_\nu$.
+  \item Negative-Size-Bias $p=0.003$: asimetr\'ia $\Rightarrow$ GJR o EGARCH.
+  \item Confirmar $\alpha+\beta<1$ y calcular vida media.
+\end{enumerate}
+
+\subsection{VaR din\'amico con GARCH}
+
+$V=\$10{,}000{,}000$, $\hat{\sigma}_t=1.84\%$, $\nu=6.2$.
+
+\[
+  \mathrm{VaR}_{95\%}=\$353{,}100 \qquad \mathrm{VaR}_{99\%}=\$573{,}800
+\]
+
+Backtest de Kupiec:
+\[
+  \mathrm{LR}_{uc}=-2\ln\!\left[
+    \frac{(1-\alpha)^{T-X}\alpha^X}{(1-\hat{\pi})^{T-X}\hat{\pi}^X}
+  \right]\sim\chi^2_1
+\]
+
+\subsection{SARIMAX multivariable para WTI}
+
+$\hat{\beta}_1=-0.412$ (REER), $\hat{\beta}_2=+0.587$ (PMI).
+
+$\Delta\log\hat{P}_{t+3}=0.587\times1.5=0.8805
+\Rightarrow\hat{P}_{t+3}\approx P_t\cdot e^{0.8805}$.
+
+\subsection{Selecci\'on y pron\'ostico de volatilidad}
+
+Por AIC: GJR-GARCH-$t$ (3224.3). Por BIC: GARCH$(1,1)$-$t$ (3249.6).
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}crrr@{}}
+\toprule
+$h$ & $(\alpha{+}\beta)^{h-1}$ & $\sigma_{t+h}^2$ & $\sigma_{t+h}$ \\
+\midrule
+1 & 1.000 & 0.002500 & 0.05000 \\
+2 & 0.963 & 0.002474 & 0.04974 \\
+3 & 0.927 & 0.002449 & 0.04949 \\
+4 & 0.893 & 0.002425 & 0.04924 \\
+5 & 0.860 & 0.002402 & 0.04901 \\
+\bottomrule
+\end{tabular}
+\caption{Pron\'ostico recursivo de volatilidad a 5 d\'ias.}
+\end{table}
+
+\section{Parte B --- Preguntas Estilo CFA Level III}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}ccccccccccc@{}}
+\toprule
+P11 & P12 & P13 & P14 & P15 & P16 & P17 & P18 & P19 & P20 \\
+\midrule
+B & B & B & B & B & B & A & B & A & C \\
+\bottomrule
+\end{tabular}
+\caption{Respuestas Parte B.}
+\end{table}
+
+Razonamientos clave:
+\begin{itemize}
+  \item \textbf{P11 (B):} ACF$(r_t^2)$ significativa es la firma del efecto ARCH.
+  \item \textbf{P12 (B):} $\alpha{+}\beta=0.99$ $\Rightarrow$ vida media $\approx69$ d\'ias.
+  \item \textbf{P13 (B):} EGARCH modela $\log\sigma_t^2$; sin restricciones de signo.
+  \item \textbf{P17 (A):} $\hat{\delta}>0$ $\Rightarrow$ prima de riesgo positiva (Merton 1973).
+  \item \textbf{P19 (A):} Regla $\sqrt{10}$ supone i.i.d.; bajo GARCH hay que iterar.
+  \item \textbf{P20 (C):} JB rechaza normalidad $\Rightarrow$ QML o verosimilitud $t$.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\part*{Bibliograf\'ia}
+\addcontentsline{toc}{part}{Bibliograf\'ia}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{enumerate}
+  \item Box, G.E.P., Jenkins, G.M.\ \& Reinsel, G.C.\ (2015).
+    \textit{Time Series Analysis}, 5th ed.\ Wiley.
+  \item Engle, R.F.\ (1982). Autoregressive conditional heteroscedasticity.
+    \textit{Econometrica}, 50(4), 987--1007.
+  \item Bollerslev, T.\ (1986). Generalized ARCH.
+    \textit{Journal of Econometrics}, 31(3), 307--327.
+  \item Glosten, L., Jagannathan, R.\ \& Runkle, D.\ (1993).
+    On the relation between expected value and volatility.
+    \textit{Journal of Finance}, 48(5), 1779--1801.
+  \item Nelson, D.B.\ (1991). Conditional heteroskedasticity in asset returns.
+    \textit{Econometrica}, 59(2), 347--370.
+  \item Taylor, S.J.\ \& Letham, B.\ (2018). Forecasting at scale.
+    \textit{The American Statistician}, 72(1), 37--45.
+  \item Kupiec, P.\ (1995). Techniques for verifying accuracy of risk models.
+    \textit{Journal of Derivatives}, 3(2), 73--84.
+  \item Merton, R.C.\ (1973). An intertemporal CAPM.
+    \textit{Econometrica}, 41(5), 867--887.
+\end{enumerate}
+
+\end{document}
